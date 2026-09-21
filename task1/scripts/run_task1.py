@@ -106,9 +106,9 @@ def train_and_evaluate():
                 all_labels.extend(y.cpu().numpy())
                 all_confs.extend(confs.cpu().numpy())
                 
-        acc = (np.array(all_preds) == np.array(all_labels)).mean()
-        macro_f1 = f1_score(all_labels, all_preds, average='macro')
-        mean_conf = np.mean(all_confs)
+        acc = float((np.array(all_preds) == np.array(all_labels)).mean())
+        macro_f1 = float(f1_score(all_labels, all_preds, average='macro'))
+        mean_conf = float(np.mean(all_confs))
         results[f"{m_name}_linear"] = {"acc": acc, "f1": macro_f1, "conf": mean_conf}
         print(f"{m_name} Linear Head -> Acc: {acc:.4f}, F1: {macro_f1:.4f}, Conf: {mean_conf:.4f}")
         
@@ -135,9 +135,9 @@ def train_and_evaluate():
                     zs_preds.extend(preds.cpu().numpy())
                     zs_confs.extend(confs.cpu().numpy())
                     
-            zs_acc = (np.array(zs_preds) == np.array(all_labels)).mean()
-            zs_macro_f1 = f1_score(all_labels, zs_preds, average='macro')
-            zs_mean_conf = np.mean(zs_confs)
+            zs_acc = float((np.array(zs_preds) == np.array(all_labels)).mean())
+            zs_macro_f1 = float(f1_score(all_labels, zs_preds, average='macro'))
+            zs_mean_conf = float(np.mean(zs_confs))
             results["clip_zeroshot"] = {"acc": zs_acc, "f1": zs_macro_f1, "conf": zs_mean_conf}
             print(f"CLIP Zero-Shot -> Acc: {zs_acc:.4f}, F1: {zs_macro_f1:.4f}, Conf: {zs_mean_conf:.4f}")
             
