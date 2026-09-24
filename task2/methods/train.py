@@ -175,5 +175,5 @@ def train(method):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", type=str, required=True, choices=["source_only", "dan", "dann", "cdan"])
-    args = parser.ArgumentParser().parse_args()
+    args = parser.parse_args()
     train(args.method)
