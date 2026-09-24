@@ -125,7 +125,6 @@ def main():
             save_file = f"task1/results/tsne_{model_name.replace('/', '')}_{trans_name.replace(' ', '')}.png"
             plot_tsne(feat_clean, feat_trans, labels, f"{model_name} - {trans_name}", save_file)
             print(f"Saved plot to {save_file}")
-    """
 
 if __name__ == "__main__":
     main()
