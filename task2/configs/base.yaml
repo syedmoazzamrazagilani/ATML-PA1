@@ -1,5 +1,5 @@
 seed: 6304
-data_dir: "../data_cache/PACS"
+data_dir: "data_cache/PACS"
 splits_path: "shared/splits/pacs_sketch_seed6304.json"
 results_dir: "task2/results"
 checkpoints_dir: "task2/checkpoints"
