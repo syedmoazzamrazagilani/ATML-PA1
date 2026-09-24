@@ -139,5 +139,53 @@ def run_evaluations():
         json.dump(final_results, f, indent=2)
     print(f"\nSaved all bias results to {RESULTS_DIR}/bias_results.json")
 
+def evaluate_consistency_and_bias(model, clean_loader, transformed_loader, is_cue_conflict=False):
+    model.eval()
+    clean_preds, trans_preds, shape_labels, texture_labels = [], [], [], []
+    
+    with torch.no_grad():
+        for (clean_img, labels), (trans_img, trans_info) in zip(clean_loader, transformed_loader):
+            
+            clean_out = model(clean_img.cuda())
+            trans_out = model(trans_img.cuda())
+            
+            clean_preds.append(clean_out.argmax(dim=-1).cpu())
+            trans_preds.append(trans_out.argmax(dim=-1).cpu())
+            
+            if is_cue_conflict:
+                shape_labels.append(trans_info[0])
+                texture_labels.append(trans_info[1])
+
+    clean_preds = torch.cat(clean_preds)
+    trans_preds = torch.cat(trans_preds)
+    
+    # 1. Prediction Consistency Metric
+    consistency = (clean_preds == trans_preds).float().mean().item()
+    
+    if is_cue_conflict:
+        shape_labels = torch.cat(shape_labels)
+        texture_labels = torch.cat(texture_labels)
+        
+        # 2. Raw Decision Counts
+        n_shape = (trans_preds == shape_labels).sum().item()
+        n_texture = (trans_preds == texture_labels).sum().item()
+        n_total = len(trans_preds)
+        n_other = n_total - (n_shape + n_texture)
+        
+        shape_bias = (n_shape / (n_shape + n_texture)) * 100.0 if (n_shape + n_texture) > 0 else 0
+        coverage = ((n_shape + n_texture) / n_total) * 100.0
+        
+        return {
+            "consistency": consistency,
+            "n_shape": n_shape,
+            "n_texture": n_texture,
+            "n_other": n_other,
+            "n_total": n_total,
+            "shape_bias_pct": shape_bias,
+            "coverage_pct": coverage
+        }
+        
+    return {"consistency": consistency}
+
 if __name__ == "__main__":
     run_evaluations()
