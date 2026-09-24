@@ -119,6 +119,7 @@ def main():
         "Grayscale": DataLoader(gray_dataset, batch_size=32, shuffle=False),
         "Patch Shuffle": DataLoader(patch_dataset, batch_size=32, shuffle=False),
         "Translation": DataLoader(trans_dataset, batch_size=32, shuffle=False)
+    }
     
     print("Extracting clean features...")
     clean_features = {}
