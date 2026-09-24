@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import umap
@@ -32,3 +33,29 @@ def visualize_features(clean_features, transformed_features, labels, title="UMAP
     plt.tight_layout()
     plt.savefig(f"{title.replace(' ', '_').lower()}.png")
     plt.show()
+
+
+def plot_joint_representations(clean_features, trans_features, labels, save_path, title):
+    N = len(clean_features)
+    all_features = torch.cat([clean_features, trans_features], dim=0).numpy()
+    
+    reducer = umap.UMAP(n_components=2, random_state=6304)
+    embeddings = reducer.fit_transform(all_features)
+    
+    emb_clean = embeddings[:N]
+    emb_trans = embeddings[N:]
+    labels_np = labels.numpy()
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    scatter_clean = ax.scatter(emb_clean[:, 0], emb_clean[:, 1], c=labels_np, 
+                               cmap='tab10', marker='o', alpha=0.6, label='Clean', edgecolors='k')
+    scatter_trans = ax.scatter(emb_trans[:, 0], emb_trans[:, 1], c=labels_np, 
+                               cmap='tab10', marker='X', alpha=0.8, label='Transformed')
+    
+    ax.set_title(title)
+    ax.legend(loc='best')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
