@@ -1,20 +1,25 @@
 import torch
 import torch.nn.functional as F
 
-def calculate_cosine_stability(features_clean, features_transformed):
+def compute_cosine_stability(backbone, clean_loader, transformed_loader):
     """
-    Computes the cosine stability (I_T) between clean and transformed representations.
-    Inputs should be PyTorch tensors of shape (N, D).
+    Computes I_T = (1/N) * sum( (f(x)^T f(T(x))) / (||f(x)|| * ||f(T(x))||) )
     """
-    if features_clean.shape != features_transformed.shape:
-        raise ValueError("Feature matrices must have the same dimensions.")
+    backbone.eval()
+    clean_features, trans_features = [], []
     
-    # Normalize features (L2 norm)
-    f_c_norm = F.normalize(features_clean, p=2, dim=1)
-    f_t_norm = F.normalize(features_transformed, p=2, dim=1)
+    with torch.no_grad():
+        for (clean_img, _), (trans_img, _) in zip(clean_loader, transformed_loader):
+            f_clean = backbone(clean_img.cuda())
+            f_trans = backbone(trans_img.cuda())
+            
+            clean_features.append(f_clean.cpu())
+            trans_features.append(f_trans.cpu())
+            
+    clean_features = torch.cat(clean_features)
+    trans_features = torch.cat(trans_features)
     
-    # Calculate dot product per example, then average across N
-    similarities = torch.sum(f_c_norm * f_t_norm, dim=1)
-    i_t = torch.mean(similarities).item()
+    stability_scores = F.cosine_similarity(clean_features, trans_features, dim=1)
+    i_t_mean = stability_scores.mean().item()
     
-    return i_t
+    return i_t_mean
