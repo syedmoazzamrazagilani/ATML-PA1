@@ -1,8 +1,8 @@
 seed: 6304
 data_dir: "../data_cache/PACS"
-splits_path: "../shared/splits/pacs_sketch_seed6304.json"
-results_dir: "results"
-checkpoints_dir: "checkpoints"
+splits_path: "shared/splits/pacs_sketch_seed6304.json"
+results_dir: "task2/results"
+checkpoints_dir: "task2/checkpoints"
 
 source_domains: ["photo", "art_painting", "cartoon"]
 target_domain: "sketch"
