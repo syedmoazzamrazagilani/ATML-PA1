@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,8 +8,13 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import open_clip
 from torchvision.models import resnet50, ResNet50_Weights, vit_b_16, ViT_B_16_Weights
+import torchvision.transforms as T
+from torch.utils.data import Dataset, DataLoader
+from torchvision.datasets import STL10
 
-# Fix seed 6304 for reproducibility across projections
+from task1.configs.config import DATA_DIR
+from task1.data.transforms import to_grayscale, translate_image, shuffle_patches_4x4
+
 torch.manual_seed(6304)
 np.random.seed(6304)
 
@@ -31,17 +37,23 @@ def get_backbones(device):
     return {"ResNet-50": resnet, "ViT-B/16": vit, "OpenCLIP": clip_model}
 
 def extract_features(model, model_name, loader, device):
-    """Extracts representations for all images in a dataloader."""
+    """Extracts representations while applying model-specific normalization."""
+    imagenet_norm = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    clip_norm = T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
+    
     features, labels = [], []
     with torch.no_grad():
         for x, y in loader:
             x = x.to(device)
+            
             if model_name == "OpenCLIP":
-                # CLIP embeddings should be explicitly normalized
+                x = clip_norm(x)
                 feat = model.encode_image(x)
-                feat = F.normalize(feat, dim=-1)
+                feat = torch.nn.functional.normalize(feat, dim=-1)
             else:
+                x = imagenet_norm(x)
                 feat = model(x)
+                
             features.append(feat.cpu())
             labels.append(y)
     
@@ -93,16 +105,20 @@ def plot_tsne(feat_clean, feat_trans, labels, title, save_path):
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs("task1/results", exist_ok=True)
-    
     models = get_backbones(device)
-    from task1.data.make_subset import get_loaders
-    clean_loader = get_loaders("clean", shuffle=False)
+    
+    split_file = os.path.join(DATA_DIR, "stl10_splits_seed6304.json")
+    
+    clean_dataset = STL10InterventionDataset(split_file, intervention_fn=None)
+    gray_dataset = STL10InterventionDataset(split_file, intervention_fn=to_grayscale)
+    patch_dataset = STL10InterventionDataset(split_file, intervention_fn=lambda x: shuffle_patches_4x4(x, seed=6304))
+    trans_dataset = STL10InterventionDataset(split_file, intervention_fn=lambda x: translate_image(x, 16, 0)) # Fixed 16px displacement
+
+    clean_loader = DataLoader(clean_dataset, batch_size=32, shuffle=False)
     trans_loaders = {
-         "Grayscale": get_loaders("grayscale", shuffle=False),
-         "Translation": get_loaders("translation", shuffle=False),
-         "Patch Shuffle": get_loaders("patch_shuffle", shuffle=False),
-         "Cue Conflict": get_loaders("cue_conflict", shuffle=False)
-    }
+        "Grayscale": DataLoader(gray_dataset, batch_size=32, shuffle=False),
+        "Patch Shuffle": DataLoader(patch_dataset, batch_size=32, shuffle=False),
+        "Translation": DataLoader(trans_dataset, batch_size=32, shuffle=False)
     
     print("Extracting clean features...")
     clean_features = {}
@@ -125,6 +141,34 @@ def main():
             save_file = f"task1/results/tsne_{model_name.replace('/', '')}_{trans_name.replace(' ', '')}.png"
             plot_tsne(feat_clean, feat_trans, labels, f"{model_name} - {trans_name}", save_file)
             print(f"Saved plot to {save_file}")
+
+class STL10InterventionDataset(Dataset):
+    def __init__(self, split_path, intervention_fn=None):
+        with open(split_path, "r") as f:
+            splits = json.load(f)
+        self.indices = splits["test_subset_indices"]
+        
+        self.dataset = STL10(root=DATA_DIR, split='test', download=True)
+        self.intervention_fn = intervention_fn
+        
+        self.base_prep = T.Compose([
+            T.Resize((224, 224)),
+            T.ToTensor()
+        ])
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = self.indices[idx]
+        img, label = self.dataset[real_idx]
+        
+        img_tensor = self.base_prep(img)
+        
+        if self.intervention_fn is not None:
+            img_tensor = self.intervention_fn(img_tensor)
+            
+        return img_tensor, label
 
 if __name__ == "__main__":
     main()
