@@ -1,8 +1,7 @@
 import os
 import json
 import shutil
-import urllib.request
-import zipfile
+import subprocess
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
@@ -31,21 +30,23 @@ def download_and_extract_pacs(data_dir):
     photo_dir = os.path.join(data_dir, "photo")
     
     if not os.path.exists(photo_dir):
-        print("Downloading PACS dataset...")
-        url = "https://wjdcloud.blob.core.windows.net/dataset/PACS.zip"
-        zip_path = os.path.join(data_dir, "PACS.zip")
-        urllib.request.urlretrieve(url, zip_path)
+        print("Downloading PACS dataset via GitHub mirror...")
+        temp_dir = os.path.join(data_dir, "temp_repo")
         
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(data_dir)
-        os.remove(zip_path)
+        subprocess.run(
+            ["git", "clone", "https://github.com/MachineLearning2020/Homework3-PACS.git", temp_dir], 
+            check=True
+        )
         
-        kfold_dir = os.path.join(data_dir, "kfold")
-        if os.path.exists(kfold_dir):
-            for dom in ["photo", "art_painting", "cartoon", "sketch"]:
-                shutil.move(os.path.join(kfold_dir, dom), os.path.join(data_dir, dom))
-            os.rmdir(kfold_dir)
-            
+        for dom in ["photo", "art_painting", "cartoon", "sketch"]:
+            src = os.path.join(temp_dir, "PACS", dom)
+            dst = os.path.join(data_dir, dom)
+            if os.path.exists(src):
+                shutil.move(src, dst)
+        
+        shutil.rmtree(temp_dir)
+        print("Download complete!")
+
 def create_pacs_splits(data_dir, split_dir, seed=6304):
     download_and_extract_pacs(data_dir)
     source_domains = ["photo", "art_painting", "cartoon"]
@@ -57,7 +58,6 @@ def create_pacs_splits(data_dir, split_dir, seed=6304):
         labels = dataset.targets
         indices = list(range(len(labels)))
         
-        # 80/20 Stratified Split
         train_idx, val_idx = train_test_split(
             indices, test_size=0.2, stratify=labels, random_state=seed
         )
