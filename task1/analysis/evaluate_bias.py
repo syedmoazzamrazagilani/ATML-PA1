@@ -1,191 +1,138 @@
 import os
 import json
-import torch
 import numpy as np
-from PIL import Image
-from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import STL10
-import torchvision.transforms as T
+import torch
 
-from task1.configs.config import SEED, DATA_DIR, RESULTS_DIR, BATCH_SIZE, STL10_CLASSES
-from task1.models.backbones import ModelWrapper
-from task1.data.transforms import to_grayscale, rotate_hue, translate_image, shuffle_patches_4x4
+from task1.configs.config import RESULTS_DIR, STL10_CLASSES
+
 
 def calculate_shape_bias(n_shape, n_texture, n_total):
-    """Calculates Shape Bias(%) and Coverage(%) as defined in the manual."""
-    if (n_shape + n_texture) == 0: 
+    """
+    Shape Bias(%) = N_shape / (N_shape + N_texture) × 100
+    Coverage(%)   = (N_shape + N_texture) / N_total × 100
+    """
+    if (n_shape + n_texture) == 0:
         return 0.0, 0.0
-    shape_bias = (n_shape / (n_shape + n_texture)) * 100
-    coverage = ((n_shape + n_texture) / n_total) * 100
+    shape_bias = (n_shape / (n_shape + n_texture)) * 100.0
+    coverage   = ((n_shape + n_texture) / n_total) * 100.0
     return shape_bias, coverage
 
-def run_evaluations():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    with open(os.path.join(DATA_DIR, "stl10_splits_seed6304.json"), "r") as f:
-        splits = json.load(f)
-        
-    models_to_test = ["resnet50", "vit_b_16", "clip_vit_b_32"]
-    final_results = {}
-    
-    pre_norm = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
-    test_ds = STL10(root=DATA_DIR, split='test', transform=pre_norm, download=False)
-    test_loader = DataLoader(Subset(test_ds, splits["test_subset_indices"]), batch_size=BATCH_SIZE, shuffle=False)
-    
-    for m_name in models_to_test:
-        print(f"\n--- Running Interventions on {m_name} ---")
-        if m_name == "clip_vit_b_32":
-            norm = T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
-        else:
-            norm = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            
-        wrapper = ModelWrapper(model_name=m_name, num_classes=len(STL10_CLASSES)).to(device)
-        
-        print("Quickly reloading linear head weights...")
-        train_ds = STL10(root=DATA_DIR, split='train', transform=T.Compose([pre_norm, norm]), download=False)
-        train_loader = DataLoader(Subset(train_ds, splits["train_indices"]), batch_size=BATCH_SIZE, shuffle=True)
-        optimizer = torch.optim.AdamW(wrapper.head.parameters(), lr=1e-3, weight_decay=1e-4)
-        criterion = torch.nn.CrossEntropyLoss()
-        
-        wrapper.train()
-        for epoch in range(12): 
-            for x, y in train_loader:
-                x, y = x.to(device), y.to(device)
-                optimizer.zero_grad()
-                logits, _ = wrapper(x)
-                loss = criterion(logits, y)
-                loss.backward()
-                optimizer.step()
-        wrapper.eval()
-        
-        m_res = {}
-        
-        # 1. Color and Patch Interventions
-        interventions = {
-            "grayscale": lambda x: to_grayscale(x),
-            "hue_rotation": lambda x: rotate_hue(x, factor=0.5),
-            "patch_shuffle": lambda x: shuffle_patches_4x4(x, seed=SEED)
-        }
-        
-        for inv_name, inv_func in interventions.items():
-            preds_list, labels_list = [], []
-            with torch.no_grad():
-                for x, y in test_loader:
-                    x_inv = torch.stack([inv_func(img) for img in x])
-                    x_norm = torch.stack([norm(img) for img in x_inv]).to(device)
-                    logits, _ = wrapper(x_norm)
-                    preds_list.extend(logits.argmax(dim=1).cpu().numpy())
-                    labels_list.extend(y.numpy())
-            
-            acc = float((np.array(preds_list) == np.array(labels_list)).mean())
-            m_res[inv_name] = acc
-            print(f"[{inv_name}] Accuracy: {acc:.4f}")
-            
-        # 2. Translation (Average over 4 directions: +x, -x, +y, -y)
-        shifts = [8, 16, 32]
-        for shift in shifts:
-            shift_accs = []
-            directions = [(shift, 0), (-shift, 0), (0, shift), (0, -shift)]
-            for dx, dy in directions:
-                preds_list, labels_list = [], []
-                with torch.no_grad():
-                    for x, y in test_loader:
-                        x_inv = torch.stack([translate_image(img, dx, dy) for img in x])
-                        x_norm = torch.stack([norm(img) for img in x_inv]).to(device)
-                        logits, _ = wrapper(x_norm)
-                        preds_list.extend(logits.argmax(dim=1).cpu().numpy())
-                        labels_list.extend(y.numpy())
-                
-                shift_accs.append((np.array(preds_list) == np.array(labels_list)).mean())
-            
-            avg_acc = float(np.mean(shift_accs))
-            m_res[f"translation_{shift}px"] = avg_acc
-            print(f"[translation_{shift}px] Avg Accuracy: {avg_acc:.4f}")
-            
-        # 3. Cue Conflicts (Shape vs Texture)
-        cue_dir = os.path.join(DATA_DIR, "cue_conflicts")
-        if os.path.exists(cue_dir):
-            n_shape, n_texture, n_total = 0, 0, 0
-            with torch.no_grad():
-                for fname in os.listdir(cue_dir):
-                    if not fname.endswith(".png"): continue
-                    # Format generated earlier: shape_3_texture_5_0.png
-                    parts = fname.split("_")
-                    shape_class = int(parts[1])
-                    texture_class = int(parts[3])
-                    
-                    img = Image.open(os.path.join(cue_dir, fname)).convert("RGB")
-                    x = pre_norm(img)
-                    x_norm = norm(x).unsqueeze(0).to(device)
-                    
-                    logits, _ = wrapper(x_norm)
-                    pred = logits.argmax(dim=1).item()
-                    
-                    if pred == shape_class:
-                        n_shape += 1
-                    elif pred == texture_class:
-                        n_texture += 1
-                    n_total += 1
-                    
-            sb, cov = calculate_shape_bias(n_shape, n_texture, n_total)
-            m_res["shape_bias_pct"] = float(sb)
-            m_res["coverage_pct"] = float(cov)
-            print(f"[Cue Conflict] Shape Bias: {sb:.2f}%, Coverage: {cov:.2f}%")
-        else:
-            print("[Cue Conflict] Directory not found. Did the generation script finish?")
-            
-        final_results[m_name] = m_res
-        
-    with open(os.path.join(RESULTS_DIR, "bias_results.json"), "w") as f:
-        json.dump(final_results, f, indent=2)
-    print(f"\nSaved all bias results to {RESULTS_DIR}/bias_results.json")
 
-def evaluate_consistency_and_bias(model, clean_loader, transformed_loader, is_cue_conflict=False):
+def evaluate_consistency_and_bias(model, clean_loader, transformed_loader,
+                                   norm_fn, device, is_cue_conflict=False):
+    """
+    Evaluates prediction consistency and optional shape-bias metrics.
+
+    Parameters
+    ----------
+    model              : ModelWrapper (eval mode, on device)
+    clean_loader       : DataLoader yielding (pre_norm_tensor, label)
+    transformed_loader : DataLoader yielding (pre_norm_tensor, label|info)
+    norm_fn            : normalisation transform (model-specific)
+    device             : torch.device
+    is_cue_conflict    : if True, loader yields (img, (content_cls, style_cls))
+
+    Returns
+    -------
+    dict with keys: consistency, [n_shape, n_texture, n_other,
+                                  n_total, shape_bias_pct, coverage_pct]
+    """
     model.eval()
-    clean_preds, trans_preds, shape_labels, texture_labels = [], [], [], []
-    
+    clean_preds, trans_preds = [], []
+    shape_labels, texture_labels = [], []
+
     with torch.no_grad():
-        for (clean_img, labels), (trans_img, trans_info) in zip(clean_loader, transformed_loader):
-            
-            clean_out = model(clean_img.cuda())
-            trans_out = model(trans_img.cuda())
-            
-            clean_preds.append(clean_out.argmax(dim=-1).cpu())
-            trans_preds.append(trans_out.argmax(dim=-1).cpu())
-            
+        for (cx, _), (tx, tinfo) in zip(clean_loader, transformed_loader):
+            cx_n = torch.stack([norm_fn(img) for img in cx]).to(device)
+            tx_n = torch.stack([norm_fn(img) for img in tx]).to(device)
+
+            clean_preds.append(model(cx_n)[0].argmax(1).cpu())
+            trans_preds.append(model(tx_n)[0].argmax(1).cpu())
+
             if is_cue_conflict:
-                shape_labels.append(trans_info[0])
-                texture_labels.append(trans_info[1])
+                # tinfo expected as (content_cls_tensor, style_cls_tensor)
+                shape_labels.append(tinfo[0])
+                texture_labels.append(tinfo[1])
 
     clean_preds = torch.cat(clean_preds)
     trans_preds = torch.cat(trans_preds)
-    
-    # 1. Prediction Consistency Metric
     consistency = (clean_preds == trans_preds).float().mean().item()
-    
+
     if is_cue_conflict:
-        shape_labels = torch.cat(shape_labels)
+        shape_labels   = torch.cat(shape_labels)
         texture_labels = torch.cat(texture_labels)
-        
-        # 2. Raw Decision Counts
-        n_shape = (trans_preds == shape_labels).sum().item()
+        n_shape   = (trans_preds == shape_labels).sum().item()
         n_texture = (trans_preds == texture_labels).sum().item()
-        n_total = len(trans_preds)
-        n_other = n_total - (n_shape + n_texture)
-        
-        shape_bias = (n_shape / (n_shape + n_texture)) * 100.0 if (n_shape + n_texture) > 0 else 0
-        coverage = ((n_shape + n_texture) / n_total) * 100.0
-        
+        n_total   = len(trans_preds)
+        n_other   = n_total - n_shape - n_texture
+        sb, cov   = calculate_shape_bias(n_shape, n_texture, n_total)
         return {
-            "consistency": consistency,
-            "n_shape": n_shape,
-            "n_texture": n_texture,
-            "n_other": n_other,
-            "n_total": n_total,
-            "shape_bias_pct": shape_bias,
-            "coverage_pct": coverage
+            "consistency":   consistency,
+            "n_shape":       n_shape,
+            "n_texture":     n_texture,
+            "n_other":       n_other,
+            "n_total":       n_total,
+            "shape_bias_pct": sb,
+            "coverage_pct":   cov,
         }
-        
+
     return {"consistency": consistency}
 
+
+def print_summary():
+    """Print a combined summary of all Task-1 bias results to stdout."""
+    files = {
+        "Clean Baseline": "clean_baseline.json",
+        "Color Bias":     "color_bias.json",
+        "Cue Conflicts":  "cue_conflicts.json",
+        "Translation":    "translation.json",
+        "Patch Shuffle":  "patch_shuffle.json",
+    }
+    for title, fname in files.items():
+        path = os.path.join(RESULTS_DIR, fname)
+        if not os.path.exists(path):
+            print(f"\n[{title}] Results not found at {path}")
+            continue
+        with open(path) as f:
+            data = json.load(f)
+        print(f"\n{'─'*55}")
+        print(f"  {title}")
+        print(f"{'─'*55}")
+
+        if title == "Clean Baseline":
+            for k, v in data.items():
+                print(f"  {k:<25}  acc={v['acc']:.4f}  f1={v['f1']:.4f}  "
+                      f"conf={v['conf']:.4f}")
+
+        elif title == "Color Bias":
+            for m_name, m_data in data.items():
+                print(f"\n  {m_name}")
+                for inv, vals in m_data.items():
+                    print(f"    {inv:<18}  acc={vals['acc']:.4f}  "
+                          f"Δacc={vals['delta_acc']:+.4f}  "
+                          f"consistency={vals['consistency']:.4f}")
+
+        elif title == "Cue Conflicts":
+            for m_name, m_data in data.items():
+                print(f"  {m_name:<20}  shape_bias={m_data['shape_bias_pct']:.2f}%  "
+                      f"coverage={m_data['coverage_pct']:.2f}%  "
+                      f"(n_shape={m_data['n_shape']}  n_tex={m_data['n_texture']}  "
+                      f"n_other={m_data['n_other']})")
+
+        elif title == "Translation":
+            for m_name, m_data in data.items():
+                print(f"  {m_name}")
+                for δ, vals in m_data["shifts"].items():
+                    print(f"    δ={int(δ):2d}px  acc={vals['avg_accuracy']:.4f}  "
+                          f"consistency={vals['avg_consistency']:.4f}")
+
+        elif title == "Patch Shuffle":
+            for m_name, v in data.items():
+                print(f"  {m_name:<20}  clean={v['clean_acc']:.4f}  "
+                      f"shuffled={v['shuffled_acc']:.4f}  "
+                      f"Δacc={v['delta_acc']:+.4f}  "
+                      f"consistency={v['consistency']:.4f}")
+
+
 if __name__ == "__main__":
-    run_evaluations()
+    print_summary()
