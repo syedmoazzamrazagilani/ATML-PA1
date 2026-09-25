@@ -11,8 +11,9 @@ def sample_inter_class_pairs(labels: torch.Tensor):
     class accidentally matches.
     """
     n       = len(labels)
-    idx_a   = torch.arange(n)
-    idx_b   = torch.randperm(n)
+    device  = labels.device
+    idx_a   = torch.arange(n, device=device)
+    idx_b   = torch.randperm(n, device=device)
 
     same    = (labels[idx_a] == labels[idx_b]).nonzero(as_tuple=True)[0]
     max_try = 10
