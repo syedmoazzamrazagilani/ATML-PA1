@@ -1,0 +1,27 @@
+method: proser
+seed: 6304
+
+# Data
+data_dir: data_cache
+cifar10_val_split: 0.1
+
+num_known_classes: 10
+num_dummy_classes: 5
+
+vanilla_ckpt: task4/checkpoints/vanilla_best.pth
+optimizer: sgd
+lr: 1e-3
+momentum: 0.9
+weight_decay: 5e-4
+lr_schedule: cosine
+batch_size: 128
+epochs: 50
+
+beta: 1.0
+gamma: 0.1
+
+mixup_alpha: 2.0
+mixup_beta: 2.0
+
+checkpoints_dir: task4/checkpoints
+results_dir: task4/results
