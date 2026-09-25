@@ -1,0 +1,21 @@
+method: gcsc
+seed: 6304
+
+data_dir: data_cache
+cifar10_val_split: 0.1
+
+num_known_classes: 10
+
+optimizer: sgd
+lr: 0.1
+momentum: 0.9
+weight_decay: 5e-4
+lr_schedule: cosine
+batch_size: 128
+epochs: 100
+
+randaugment_num_ops: 2
+randaugment_magnitude: 9
+
+checkpoints_dir: task4/checkpoints
+results_dir: task4/results
