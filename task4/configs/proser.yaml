@@ -10,7 +10,7 @@ num_dummy_classes: 5
 
 vanilla_ckpt: task4/checkpoints/vanilla_best.pth
 optimizer: sgd
-lr: 1e-3
+lr: 0.001
 momentum: 0.9
 weight_decay: 0.0005
 lr_schedule: cosine
